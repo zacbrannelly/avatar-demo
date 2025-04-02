@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Avatar Demo</title>
+    <style>
+        body { 
+            margin: 0; 
+        }
+
+        body.jerry {
+            background: url('doctors-office.jpg') no-repeat center center fixed;
+        }
+
+        body.jenifer {
+            background: url('general-office.jpg') no-repeat center center fixed;
+        }
+
+        body.sarah {
+            background: url('doctors-office-2.jpg') no-repeat center center fixed;
+        }
+
+        canvas { display: block; }
+        #position-buttons {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 1000;
+        }
+        .position-button {
+            padding: 10px 20px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.3s;
+        }
+        .position-button:hover {
+            background: #45a049;
+        }
+        #model-select {
+            padding: 10px;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background: white;
+            cursor: pointer;
+            width: 200px;
+        }
+        #model-select:hover {
+            border-color: #999;
+        }
+    </style>
+</head>
+<body id="body">
+    <div id="position-buttons">
+        <select id="model-select" onchange="loadSelectedModel()">
+            <option value="Jerry">Jerry</option>
+            <option value="Jenifer">Jenifer</option>
+            <option value="Sarah">Sarah</option>
+        </select>
+        <button class="position-button" onclick="toggleAnimation()">Play Animation</button>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.9/dat.gui.min.js"></script>
+    <script src="https://mrdoob.github.io/stats.js/build/stats.min.js"></script>
+    <script type="module">
+        import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.175.0/+esm'
+        import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.175.0/examples/jsm/loaders/GLTFLoader.js/+esm'
+        import { FBXLoader } from 'https://cdn.jsdelivr.net/npm/three@0.175.0/examples/jsm/loaders/FBXLoader.js/+esm'
+        import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.175.0/examples/jsm/controls/OrbitControls.js/+esm'
+
+        const demoOptions = [
+            {
+                name: "Jerry",
+                className: "jerry",
+                audio: "Jerry-Audio-2.wav",
+                glb: "jerry.glb",
+                idle: "Idle",
+                talking: null,
+                bsWeights: "jerry_bsweight.json",
+                cameraPos: [0.03, 1.7, 0.453],
+            },
+            {
+                name: "Jenifer",
+                className: "jenifer",
+                audio: "Jenifer-Audio.wav",
+                glb: "jenifer.glb",
+                idle: "Idle",
+                talking: null,
+                bsWeights: "jenifer_bsweight.json",
+                cameraPos: [0.03, 1.6, 0.453],
+            },
+            {
+                name: "Sarah",
+                className: "sarah",
+                audio: "Sarah-Audio.wav",
+                glb: "sarah.glb",
+                idle: "Idle",
+                talking: null,
+                bsWeights: "sarah_bsweight.json",
+                cameraPos: [0.03, 1.6, 0.453],
+            }
+        ];
+
+        // Initialize scene after all resources are loaded
+        window.onload = function() {
+            // Initialize Stats and GUI only if debug=true in URL
+            const urlParams = new URLSearchParams(window.location.search);
+            const debugMode = urlParams.get('debug') === 'true';
+            
+            // Initialize Stats if debug mode is on
+            const stats = debugMode ? new Stats() : null;
+            if (stats) {
+                stats.showPanel(0);
+                document.body.appendChild(stats.dom);
+            }
+
+            // Create GUI only if debug mode is on
+            const gui = debugMode ? new dat.GUI() : null;
+            const blendShapeFolder = gui ? gui.addFolder('Blend Shapes') : null;
+            if (blendShapeFolder) blendShapeFolder.open();
+            
+            // Create a folder for bone controls
+            const bonesFolder = gui ? gui.addFolder('Bones') : null;
+            if (bonesFolder) bonesFolder.open();
+
+            // Create a map to store bone references
+            const boneMap = new Map();
+            let currentAnimation = null;
+
+            // Animation sequence data
+            let animationData = null;
+            let isPlaying = false;
+            
+            // Create audio element
+            const audioElement = new Audio('audio.wav');
+
+            const weightScales = {
+                'eyeBlinkLeft': 2,
+                'eyeBlinkRight': 2,
+            }
+            
+            // Define mapping between the blendshapes in the JSON data and the blendshapes in the GLB model
+            const blendshapeMapping = {};
+
+            // Function to stop the animation
+            function stopAnimation() {
+                if (currentAnimation) {
+                    cancelAnimationFrame(currentAnimation);
+                    currentAnimation = null;
+                }
+                
+                audioElement.pause();
+                audioElement.currentTime = 0;
+
+                // Switch back to idle animation with crossfade
+                if (idleAction && talkingAction) {
+                    talkingAction.fadeOut(0.5);
+                    idleAction.reset().fadeIn(0.5).play();
+                }
+
+                // Update button text
+                const button = document.querySelector('.position-button');
+                button.textContent = 'Play Animation';
+                isPlaying = false;
+            }
+
+            // Function to toggle animation play/stop
+            window.toggleAnimation = function() {
+                const button = document.querySelector('.position-button');
+                
+                if (isPlaying) {
+                    stopAnimation();
+                } else {
+                    button.textContent = 'Stop';
+                    isPlaying = true;
+                    playAnimation();
+                }
+            };
+
+            // Function to play the animation sequence
+            window.playAnimation = function() {
+                if (!animationData) {
+                    console.error('Animation data not loaded yet');
+                    return;
+                }
+
+                // Reset any ongoing animation
+                if (currentAnimation) {
+                    cancelAnimationFrame(currentAnimation);
+                }
+
+                // Function to safely apply a blendshape weight
+                function applyBlendshapeWeight(targetName, weight, source) {
+                    if (blendShapeControls[targetName] !== undefined) {
+                        // Update the GUI control
+                        blendShapeControls[targetName] = weight;
+                        
+                        // Apply to all relevant targets
+                        const targets = blendShapeTargets.get(targetName);
+                        if (targets) {
+                            targets.forEach(({ object, index }) => {
+                                // Ensure the weight is properly clamped
+                                const clampedWeight = Math.max(0, Math.min(1, weight));
+                                object.morphTargetInfluences[index] = clampedWeight;
+                            });
+                        }
+                    }
+                }
+
+                // Switch to talking animation with crossfade
+                if (idleAction && talkingAction) {
+                    idleAction.fadeOut(0.5);
+                    talkingAction.reset().fadeIn(0.5).play();
+                }
+
+                const onEnded = () => {
+                    stopAnimation();
+                };
+
+                function updateAnimation() {
+                    // Calculate which frame we should be on based on audio time
+                    const currentTime = audioElement.currentTime;
+                    const frameIndex = Math.floor(currentTime * animationData.exportFps);
+
+                    if (frameIndex < animationData.numFrames) {
+                        // Get weights for current frame
+                        const frameWeights = animationData.weightMat[frameIndex];
+
+                        // Apply weights to mapped blendshapes
+                        animationData.facsNames.forEach((facsName, index) => {
+                            const weight = frameWeights[index] * (weightScales[facsName] || 1);
+                            const targetName = blendshapeMapping[facsName] || facsName;
+
+                            if (targetName) {
+                                if (Array.isArray(targetName)) {
+                                    // If mapping to multiple targets, apply to all
+                                    targetName.forEach(name => {
+                                        applyBlendshapeWeight(name, weight, facsName);
+                                    });
+                                } else {
+                                    // Single target mapping
+                                    applyBlendshapeWeight(targetName, weight, facsName);
+                                }
+                            }
+                        });
+
+                        // Update GUI
+                        if (blendShapeFolder) {
+                            for (const controller of blendShapeFolder.__controllers) {
+                                controller.updateDisplay();
+                            }
+                        }
+
+                        // Continue animation if audio is still playing
+                        if (!audioElement.ended) {
+                            currentAnimation = requestAnimationFrame(updateAnimation);
+                        }
+                    }
+                }
+
+                // Start animation and audio
+                audioElement.currentTime = 0;
+
+                // Remove any existing event listeners to prevent duplicates
+                audioElement.removeEventListener('ended', onEnded);
+
+                // Add the event listeners
+                audioElement.addEventListener('ended', onEnded);
+
+                audioElement.play().catch(error => {
+                    console.error('Error playing audio:', error);
+                });
+                currentAnimation = requestAnimationFrame(updateAnimation);
+
+                console.log('Starting animation playback...');
+            };
+
+            // Set up scene, camera, and renderer
+            const scene = new THREE.Scene();
+            const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.0001, 1000);
+            const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setClearColor(0x000000, 0);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.physicallyCorrectLights = true;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.0;
+            document.body.appendChild(renderer.domElement);
+
+            // Add orbit controls
+            const controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.screenSpacePanning = true;
+            controls.zoomSpeed = 0.2;
+            controls.minDistance = 1;
+            controls.maxDistance = 50;
+            controls.maxPolarAngle = Math.PI / 2;
+
+            // Position camera
+            camera.position.set(0.03, 1.7, 0.453);
+            camera.rotation.set(-6.14 * Math.PI / 180, 2.93 * Math.PI / 180, 0.32 * Math.PI / 180);
+            
+            // Set orbit controls target based on where the camera is looking
+            const distance = 2; // Distance to target
+            const vector = new THREE.Vector3(0, 0, -1);
+            vector.applyEuler(camera.rotation);
+            vector.multiplyScalar(distance);
+            vector.add(camera.position);
+            controls.target.copy(vector);
+            
+            // Update controls to apply the new target
+            controls.update();
+
+            // Improved lighting setup
+            const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+            directionalLight.position.set(5, 5, 5);
+            directionalLight.castShadow = true;
+            scene.add(directionalLight);
+
+            const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
+            fillLight.position.set(-5, 0, -5);
+            scene.add(fillLight);
+
+            const backLight = new THREE.DirectionalLight(0xffffff, 0.2);
+            backLight.position.set(0, -5, -5);
+            scene.add(backLight);
+
+            // Object to store blend shape controls and affected objects
+            let blendShapeControls = {};
+            let blendShapeTargets = new Map(); // Map of shape names to array of {object, index} pairs
+
+            // Load the GLB model
+            const loader = new GLTFLoader();
+
+            let mixer = null;
+            let model = null;
+            let idleAction = null;
+            let talkingAction = null;
+            let currentModelData = null;
+
+            // Function to clear existing model and animations
+            function clearCurrentModel() {
+                if (model) {
+                    scene.remove(model);
+                    model = null;
+                }
+                if (mixer) {
+                    mixer.stopAllAction();
+                    mixer = null;
+                }
+                idleAction = null;
+                talkingAction = null;
+
+                // Clear blend shape controls
+                if (blendShapeFolder) {
+                    for (const controller of blendShapeFolder.__controllers) {
+                        blendShapeFolder.remove(controller);
+                    }
+                }
+                blendShapeControls = {};
+                blendShapeTargets.clear();
+
+                // Clear bone controls
+                if (bonesFolder) {
+                    Object.values(bonesFolder.__folders).forEach(folder => {
+                        bonesFolder.removeFolder(folder);
+                    });
+                }
+                boneMap.clear();
+            }
+
+            // Function to load selected model
+            window.loadSelectedModel = function() {
+                const select = document.getElementById('model-select');
+                const selectedModel = demoOptions.find(option => option.name === select.value);
+
+                document.body.classList.remove(...demoOptions.map(option => option.className));
+                document.body.classList.add(selectedModel.className);
+                
+                if (!selectedModel) {
+                    console.error('Selected model not found');
+                    return;
+                }
+
+                currentModelData = selectedModel;
+                
+                // Update audio source
+                audioElement.src = selectedModel.audio;
+
+                // Update camera position
+                if (selectedModel.cameraPos) {
+                    const [x, y, z] = selectedModel.cameraPos;
+                    camera.position.set(x, y, z);
+                    
+                    // Update orbit controls target
+                    const distance = 2;
+                    const vector = new THREE.Vector3(0, 0, -1);
+                    vector.applyEuler(camera.rotation);
+                    vector.multiplyScalar(distance);
+                    vector.add(camera.position);
+                    controls.target.copy(vector);
+                    controls.update();
+                }
+
+                // Clear existing model
+                clearCurrentModel();
+
+                // Load new model
+                loader.load(
+                    selectedModel.glb,
+                    function (gltf) {
+                        scene.add(gltf.scene);
+                        model = gltf.scene;
+                        
+                        // First pass: collect all blend shapes and their targets
+                        gltf.scene.traverse((object) => {
+                            object.frustumCulled = false;
+                            
+                            // Store bone references
+                            if (object instanceof THREE.Bone) {
+                                boneMap.set(object.name, object);
+                            }
+                            
+                            // Add controls for bones
+                            if (object instanceof THREE.Bone && debugMode) {
+                                const boneName = object.name;
+                                const boneFolder = bonesFolder.addFolder(boneName);
+                                
+                                // Position controls
+                                const positionFolder = boneFolder.addFolder('Position');
+                                ['x', 'y', 'z'].forEach(axis => {
+                                    positionFolder.add(object.position, axis, -10, 10, 0.01)
+                                        .onChange(() => {
+                                            object.updateMatrixWorld(true);
+                                        });
+                                });
+                                
+                                // Rotation controls (in degrees)
+                                const rotationFolder = boneFolder.addFolder('Rotation');
+                                const rotationControl = {
+                                    x: THREE.MathUtils.radToDeg(object.rotation.x),
+                                    y: THREE.MathUtils.radToDeg(object.rotation.y),
+                                    z: THREE.MathUtils.radToDeg(object.rotation.z)
+                                };
+                                
+                                ['x', 'y', 'z'].forEach(axis => {
+                                    rotationFolder.add(rotationControl, axis, -180, 180, 1)
+                                        .onChange((value) => {
+                                            object.rotation[axis] = THREE.MathUtils.degToRad(value);
+                                            object.updateMatrixWorld(true);
+                                        });
+                                });
+                                
+                                // Reset button for this bone
+                                const resetBone = {
+                                    reset: function() {
+                                        object.position.set(0, 0, 0);
+                                        object.rotation.set(0, 0, 0);
+                                        object.updateMatrixWorld(true);
+                                        
+                                        // Update GUI
+                                        for (const controller of positionFolder.__controllers) {
+                                            controller.updateDisplay();
+                                        }
+                                        rotationControl.x = 0;
+                                        rotationControl.y = 0;
+                                        rotationControl.z = 0;
+                                        for (const controller of rotationFolder.__controllers) {
+                                            controller.updateDisplay();
+                                        }
+                                    }
+                                };
+                                boneFolder.add(resetBone, 'reset').name('Reset Bone');
+                            }
+                            
+                            if (object.morphTargetDictionary && object.morphTargetInfluences) {
+                                Object.keys(object.morphTargetDictionary).forEach((shapeName, index) => {
+                                    if (!blendShapeTargets.has(shapeName)) {
+                                        blendShapeTargets.set(shapeName, []);
+                                        blendShapeControls[shapeName] = 0;
+                                    }
+                                    blendShapeTargets.get(shapeName).push({ object, index });
+                                });
+                            }
+                        });
+
+                        // Second pass: create unified controls for blend shapes
+                        if (blendShapeTargets.size > 0 && debugMode) {
+                            // Add sliders for each unique blend shape
+                            for (const [shapeName, targets] of blendShapeTargets) {
+                                blendShapeFolder.add(blendShapeControls, shapeName, 0, 1, 0.01)
+                                    .onChange((value) => {
+                                        // Update all objects that have this blend shape
+                                        targets.forEach(({ object, index }) => {
+                                            object.morphTargetInfluences[index] = value;
+                                        });
+                                    });
+                            }
+
+                            // Add a reset button for all blend shapes
+                            const resetControls = {
+                                reset: function() {
+                                    for (const [shapeName, targets] of blendShapeTargets) {
+                                        blendShapeControls[shapeName] = 0;
+                                        targets.forEach(({ object, index }) => {
+                                            object.morphTargetInfluences[index] = 0;
+                                        });
+                                    }
+                                    // Update GUI
+                                    for (const controller of blendShapeFolder.__controllers) {
+                                        controller.updateDisplay();
+                                    }
+                                }
+                            };
+                            blendShapeFolder.add(resetControls, 'reset').name('Reset All');
+                        }
+
+                        mixer = new THREE.AnimationMixer(gltf.scene);
+
+                        // Store animations
+                        const idle = gltf.animations.find(animation => animation.name === selectedModel.idle);
+                        const talking = gltf.animations.find(animation => animation.name === selectedModel.talking);
+                        
+                        if (idle) {
+                            idleAction = mixer.clipAction(idle);
+                            idleAction.setLoop(THREE.LoopRepeat);
+                            idleAction.timeScale = 1;
+                            idleAction.clampWhenFinished = true;
+                            idleAction.play();
+                        }
+
+                        if (talking) {
+                            talkingAction = mixer.clipAction(talking);
+                            talkingAction.setLoop(THREE.LoopRepeat);
+                            talkingAction.timeScale = 1;
+                            talkingAction.clampWhenFinished = true;
+                        }
+
+                        // Load blend shape weights
+                        fetch(selectedModel.bsWeights)
+                            .then(response => response.json())
+                            .then(data => {
+                                animationData = data;
+                                console.log('Animation data loaded:', data);
+                            })
+                            .catch(error => console.error('Error loading animation data:', error));
+                    },
+                    function (xhr) {
+                        console.log((xhr.loaded / xhr.total * 100) + '% loaded');
+                    },
+                    function (error) {
+                        console.error('An error occurred loading the model:', error);
+                    }
+                );
+            };
+
+            // Load initial model
+            loadSelectedModel();
+
+            const clock = new THREE.Clock();
+
+            // Animation loop
+            function animate() {
+                if (stats) stats.begin();
+                
+                requestAnimationFrame(animate);
+                controls.update();
+
+                const delta = clock.getDelta();
+                if (mixer) {
+                    mixer.update(delta);
+                }
+
+                renderer.render(scene, camera);
+
+                if (stats) stats.end();
+            }
+            animate();
+
+            // Handle window resize
+            window.addEventListener('resize', onWindowResize, false);
+            function onWindowResize() {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            }
+        }
+    </script>
+</body>
+</html>
