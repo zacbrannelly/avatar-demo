@@ -142,13 +142,17 @@
             // Setup recording buttons based on URL parameter
             const recordButton = document.querySelector('.record-button');
             const playRecordingButton = document.querySelector('.position-button:last-child');
+            const downloadButton = document.getElementById('download-button');
             
             if (recordingEnabled) {
                 recordButton.classList.add('enabled');
                 playRecordingButton.style.display = 'block';
+                // Initially hide download button until there's a recording
+                downloadButton.style.display = 'none';
             } else {
                 recordButton.style.display = 'none';
                 playRecordingButton.style.display = 'none';
+                downloadButton.style.display = 'none';
             }
             
             // Initialize Stats if debug mode is on
