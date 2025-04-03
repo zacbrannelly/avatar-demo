@@ -655,7 +655,22 @@
 
                         mediaRecorder.onstop = () => {
                             const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                            recordedAudio = new Audio(URL.createObjectURL(audioBlob));
+                            
+                            // Create a new audio element specifically for the recording
+                            if (recordedAudio) {
+                                recordedAudio.remove(); // Remove old audio element if it exists
+                            }
+                            recordedAudio = document.createElement('audio');
+                            recordedAudio.controls = false;
+                            recordedAudio.style.display = 'none';
+                            document.body.appendChild(recordedAudio);
+
+                            // Convert blob to base64 data URL for iOS compatibility
+                            const reader = new FileReader();
+                            reader.onload = (e) => {
+                                recordedAudio.src = e.target.result;
+                            };
+                            reader.readAsDataURL(audioBlob);
                         };
 
                         mediaRecorder.start();
@@ -677,9 +692,12 @@
 
             // Function to play recorded audio
             window.playRecording = function() {
-                if (recordedAudio) {
+                if (recordedAudio && recordedAudio.src) {
                     recordedAudio.currentTime = 0;
-                    recordedAudio.play();
+                    recordedAudio.play().catch(error => {
+                        console.error('Error playing recorded audio:', error);
+                        alert('Error playing audio. This may be due to iOS restrictions. Please ensure you interacted with the page first.');
+                    });
                 } else {
                     alert('No recording available. Please record some audio first.');
                 }
