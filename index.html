@@ -89,6 +89,7 @@
         <button class="position-button" onclick="toggleAnimation()">Play Animation</button>
         <button class="position-button record-button" onclick="toggleRecording()">Record Audio</button>
         <button class="position-button" onclick="playRecording()">Play Recording</button>
+        <button class="position-button" onclick="downloadRecording()" id="download-button" style="display: none;">Download Recording</button>
     </div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.9/dat.gui.min.js"></script>
     <script src="https://mrdoob.github.io/stats.js/build/stats.min.js"></script>
@@ -175,6 +176,7 @@
             let audioChunks = [];
             let recordedAudio = null;
             let isRecording = false;
+            let audioBlob = null; // Add this to store the audio blob
 
             // Animation sequence data
             let animationData = null;
@@ -654,23 +656,11 @@
                         };
 
                         mediaRecorder.onstop = () => {
-                            const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                            audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                            recordedAudio = new Audio(URL.createObjectURL(audioBlob));
                             
-                            // Create a new audio element specifically for the recording
-                            if (recordedAudio) {
-                                recordedAudio.remove(); // Remove old audio element if it exists
-                            }
-                            recordedAudio = document.createElement('audio');
-                            recordedAudio.controls = false;
-                            recordedAudio.style.display = 'none';
-                            document.body.appendChild(recordedAudio);
-
-                            // Convert blob to base64 data URL for iOS compatibility
-                            const reader = new FileReader();
-                            reader.onload = (e) => {
-                                recordedAudio.src = e.target.result;
-                            };
-                            reader.readAsDataURL(audioBlob);
+                            // Show download button when recording is available
+                            document.getElementById('download-button').style.display = 'block';
                         };
 
                         mediaRecorder.start();
@@ -692,15 +682,34 @@
 
             // Function to play recorded audio
             window.playRecording = function() {
-                if (recordedAudio && recordedAudio.src) {
+                if (recordedAudio) {
                     recordedAudio.currentTime = 0;
-                    recordedAudio.play().catch(error => {
-                        console.error('Error playing recorded audio:', error);
-                        alert('Error playing audio. This may be due to iOS restrictions. Please ensure you interacted with the page first.');
-                    });
+                    recordedAudio.play();
                 } else {
                     alert('No recording available. Please record some audio first.');
                 }
+            };
+
+            // Function to download recorded audio
+            window.downloadRecording = function() {
+                if (!audioBlob) {
+                    alert('No recording available. Please record some audio first.');
+                    return;
+                }
+
+                // Create a temporary link element
+                const downloadLink = document.createElement('a');
+                downloadLink.href = URL.createObjectURL(audioBlob);
+                
+                // Get the current date and time for the filename
+                const now = new Date();
+                const timestamp = now.toISOString().replace(/[:.]/g, '-');
+                downloadLink.download = `recording-${timestamp}.wav`;
+                
+                // Trigger the download
+                document.body.appendChild(downloadLink);
+                downloadLink.click();
+                document.body.removeChild(downloadLink);
             };
         }
     </script>
