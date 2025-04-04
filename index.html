@@ -88,7 +88,7 @@
         </select>
         <button class="position-button" onclick="toggleAnimation()">Play Animation</button>
         <button class="position-button record-button" onclick="toggleRecording()">Record Audio</button>
-        <button class="position-button" onclick="playRecording()">Play Recording</button>
+        <button class="position-button play-recording-button" onclick="playRecording()">Play Recording</button>
         <button class="position-button" onclick="downloadRecording()" id="download-button" style="display: none;">Download Recording</button>
     </div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.9/dat.gui.min.js"></script>
@@ -141,7 +141,7 @@
             
             // Setup recording buttons based on URL parameter
             const recordButton = document.querySelector('.record-button');
-            const playRecordingButton = document.querySelector('.position-button:last-child');
+            const playRecordingButton = document.querySelector('.play-recording-button');
             const downloadButton = document.getElementById('download-button');
             
             if (recordingEnabled) {
